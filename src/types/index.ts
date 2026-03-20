@@ -247,6 +247,7 @@ export interface CreateConditionReportInput {
   report_type: ReportType;
   condition: ConditionRating;
   description?: string;
+  images?: string[];
 }
 
 export interface CreateDeviationInput {
@@ -257,6 +258,7 @@ export interface CreateDeviationInput {
   severity: DeviationSeverity;
   title: string;
   description?: string;
+  images?: string[];
 }
 
 export interface CreateEquipmentInput {

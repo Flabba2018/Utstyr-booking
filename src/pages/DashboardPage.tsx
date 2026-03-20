@@ -28,29 +28,32 @@ export function DashboardPage() {
 
   useEffect(() => {
     if (!profile) return;
+    let cancelled = false;
 
     const loadDashboard = async () => {
       try {
-        const [eq, bookings, loans, deviations, service] = await Promise.all([
+        const results = await Promise.allSettled([
           equipmentService.getEquipmentList(),
           bookingService.getMyBookings(profile.id),
           loanService.getMyLoans(profile.id),
           deviationService.getOpenDeviations(),
           equipmentService.getEquipmentNeedingService(),
         ]);
-        setEquipment(eq);
-        setMyBookings(bookings);
-        setMyLoans(loans);
-        setOpenDeviations(deviations);
-        setServiceAlerts(service);
+        if (cancelled) return;
+        if (results[0].status === 'fulfilled') setEquipment(results[0].value);
+        if (results[1].status === 'fulfilled') setMyBookings(results[1].value);
+        if (results[2].status === 'fulfilled') setMyLoans(results[2].value);
+        if (results[3].status === 'fulfilled') setOpenDeviations(results[3].value);
+        if (results[4].status === 'fulfilled') setServiceAlerts(results[4].value);
       } catch (err) {
-        console.error('Dashboard-feil:', err);
+        console.error('Dashboard-feil:', err instanceof Error ? err.message : 'Ukjent feil');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     loadDashboard();
+    return () => { cancelled = true; };
   }, [profile]);
 
   if (loading) return <LoadingSpinner />;

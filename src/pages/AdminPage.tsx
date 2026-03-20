@@ -14,8 +14,9 @@ import { formatDateTime } from '../lib/utils';
 import * as equipmentService from '../services/equipment.service';
 import * as loanService from '../services/loan.service';
 import * as deviationService from '../services/deviation.service';
+import * as serviceService from '../services/service.service';
 import type {
-  Equipment, EquipmentCategory, Loan, Deviation,
+  Equipment, EquipmentCategory, Loan, Deviation, ServiceRecord,
   EquipmentStatus, DeviationStatus,
 } from '../types';
 import {
@@ -27,7 +28,7 @@ export function AdminPage() {
   const { profile } = useAuth();
   const { showToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'equipment' | 'loans' | 'deviations'>('equipment');
+  const [activeTab, setActiveTab] = useState<'equipment' | 'loans' | 'deviations' | 'service'>('equipment');
   const [loading, setLoading] = useState(true);
 
   // Data
@@ -38,6 +39,8 @@ export function AdminPage() {
 
   // Create equipment modal
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showServiceModal, setShowServiceModal] = useState(false);
+  const [serviceEquipmentId, setServiceEquipmentId] = useState('');
   const [createForm, setCreateForm] = useState({
     asset_tag: '',
     name: '',
@@ -52,28 +55,74 @@ export function AdminPage() {
     block_if_service_overdue: false,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [serviceForm, setServiceForm] = useState({
+    service_type: '',
+    description: '',
+    performed_by: '',
+    performed_at: '',
+    next_service_date: '',
+    cost: '',
+  });
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       try {
-        const [eq, cats, loans, devs] = await Promise.all([
+        const results = await Promise.allSettled([
           equipmentService.getEquipmentList(),
           equipmentService.getCategories(),
           loanService.getAllActiveLoans(),
           deviationService.getOpenDeviations(),
         ]);
-        setEquipment(eq);
-        setCategories(cats);
-        setActiveLoans(loans);
-        setOpenDeviations(devs);
+        if (cancelled) return;
+        if (results[0].status === 'fulfilled') setEquipment(results[0].value);
+        if (results[1].status === 'fulfilled') setCategories(results[1].value);
+        if (results[2].status === 'fulfilled') setActiveLoans(results[2].value);
+        if (results[3].status === 'fulfilled') setOpenDeviations(results[3].value);
       } catch (err) {
-        console.error('Admin-feil:', err);
+        console.error('Admin-feil:', err instanceof Error ? err.message : 'Ukjent feil');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     load();
+    return () => { cancelled = true; };
   }, []);
+
+  const handleCreateService = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!profile || !serviceEquipmentId || !serviceForm.service_type || !serviceForm.performed_at) {
+      showToast('Fyll inn utstyr, type og dato', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await serviceService.createServiceRecord(profile.id, {
+        equipment_id: serviceEquipmentId,
+        service_type: serviceForm.service_type,
+        description: serviceForm.description || undefined,
+        performed_by: serviceForm.performed_by || undefined,
+        performed_at: serviceForm.performed_at,
+        next_service_date: serviceForm.next_service_date || undefined,
+        cost: serviceForm.cost ? parseFloat(serviceForm.cost) : undefined,
+      });
+      showToast('Service registrert!', 'success');
+      setShowServiceModal(false);
+      setServiceForm({
+        service_type: '', description: '', performed_by: '',
+        performed_at: '', next_service_date: '', cost: '',
+      });
+      setServiceEquipmentId('');
+      // Refresh equipment (service dates updated)
+      const eq = await equipmentService.getEquipmentList();
+      setEquipment(eq);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Feil ved registrering';
+      showToast(msg, 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleCreateEquipment = async (e: FormEvent) => {
     e.preventDefault();
@@ -179,6 +228,13 @@ export function AdminPage() {
         >
           <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
           Avvik ({openDeviations.length})
+        </button>
+        <button
+          className={`tab ${activeTab === 'service' ? 'active' : ''}`}
+          onClick={() => setActiveTab('service')}
+        >
+          <Wrench size={16} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+          Service
         </button>
       </div>
 
@@ -290,6 +346,54 @@ export function AdminPage() {
               ))}
             </div>
           )}
+        </>
+      )}
+
+      {/* ===== SERVICEFANE ===== */}
+      {activeTab === 'service' && (
+        <>
+          <button
+            className="btn btn-primary"
+            style={{ marginBottom: '16px' }}
+            onClick={() => setShowServiceModal(true)}
+          >
+            <Plus size={18} /> Registrer service
+          </button>
+
+          <div className="detail-section">
+            <h3>Utstyr med servicebehov</h3>
+            <div className="booking-list">
+              {equipment
+                .filter((e) => e.next_service_date)
+                .sort((a, b) => (a.next_service_date ?? '').localeCompare(b.next_service_date ?? ''))
+                .map((item) => {
+                  const overdue = item.next_service_date && new Date(item.next_service_date) < new Date();
+                  return (
+                    <div key={item.id} className="booking-item">
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <strong style={{ fontSize: '0.9rem' }}>{item.name}</strong>
+                        <StatusBadge config={EQUIPMENT_STATUS_CONFIG[item.status]} />
+                      </div>
+                      <span className="booking-meta">{item.asset_tag}</span>
+                      <span className="booking-meta" style={{ color: overdue ? 'var(--color-danger)' : 'var(--color-text-secondary)' }}>
+                        Neste service: {item.next_service_date ? formatDateTime(item.next_service_date) : '–'}
+                        {overdue && ' ⚠ Utløpt!'}
+                      </span>
+                      <button
+                        className="btn btn-outline btn-sm"
+                        style={{ marginTop: '8px', alignSelf: 'flex-start' }}
+                        onClick={() => {
+                          setServiceEquipmentId(item.id);
+                          setShowServiceModal(true);
+                        }}
+                      >
+                        <Wrench size={14} /> Registrer service
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
         </>
       )}
 
@@ -427,6 +531,104 @@ export function AdminPage() {
             disabled={submitting}
           >
             {submitting ? 'Oppretter...' : 'Opprett utstyr'}
+          </button>
+        </form>
+      </Modal>
+
+      {/* ===== SERVICE MODAL ===== */}
+      <Modal
+        open={showServiceModal}
+        onClose={() => setShowServiceModal(false)}
+        title="Registrer service"
+      >
+        <form onSubmit={handleCreateService}>
+          <div className="form-group">
+            <label className="form-label">Utstyr *</label>
+            <select
+              className="form-select"
+              value={serviceEquipmentId}
+              onChange={(e) => setServiceEquipmentId(e.target.value)}
+              required
+            >
+              <option value="">Velg utstyr...</option>
+              {equipment.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.asset_tag} – {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Type service *</label>
+            <select
+              className="form-select"
+              value={serviceForm.service_type}
+              onChange={(e) => setServiceForm({ ...serviceForm, service_type: e.target.value })}
+              required
+            >
+              <option value="">Velg type...</option>
+              <option value="kontroll">Kontroll</option>
+              <option value="vedlikehold">Vedlikehold</option>
+              <option value="reparasjon">Reparasjon</option>
+              <option value="sertifisering">Sertifisering</option>
+              <option value="annet">Annet</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Utført dato *</label>
+            <input
+              className="form-input"
+              type="date"
+              value={serviceForm.performed_at}
+              onChange={(e) => setServiceForm({ ...serviceForm, performed_at: e.target.value })}
+              required
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Neste service</label>
+            <input
+              className="form-input"
+              type="date"
+              value={serviceForm.next_service_date}
+              onChange={(e) => setServiceForm({ ...serviceForm, next_service_date: e.target.value })}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Utført av</label>
+            <input
+              className="form-input"
+              type="text"
+              value={serviceForm.performed_by}
+              onChange={(e) => setServiceForm({ ...serviceForm, performed_by: e.target.value })}
+              placeholder="Navn på person/firma"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Kostnad (kr)</label>
+            <input
+              className="form-input"
+              type="number"
+              step="0.01"
+              value={serviceForm.cost}
+              onChange={(e) => setServiceForm({ ...serviceForm, cost: e.target.value })}
+              placeholder="0.00"
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Beskrivelse</label>
+            <textarea
+              className="form-textarea"
+              value={serviceForm.description}
+              onChange={(e) => setServiceForm({ ...serviceForm, description: e.target.value })}
+              placeholder="Hva ble gjort..."
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn btn-primary btn-full"
+            disabled={submitting}
+          >
+            {submitting ? 'Registrerer...' : 'Registrer service'}
           </button>
         </form>
       </Modal>

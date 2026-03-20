@@ -81,10 +81,10 @@ export function LoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Minst 12 tegn"
               autoComplete={isRegister ? 'new-password' : 'current-password'}
               required
-              minLength={6}
+              minLength={12}
             />
           </div>
 

@@ -28,7 +28,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authService.getSession().then((session) => {
       setSession(session);
       if (session?.user) {
-        authService.getProfile(session.user.id).then(setProfile).catch(console.error);
+        authService.getProfile(session.user.id).then(setProfile).catch((err) => {
+          console.error('Profil-feil:', err instanceof Error ? err.message : 'Ukjent feil');
+          setProfile(null);
+        });
       }
       setLoading(false);
     });

@@ -21,7 +21,9 @@ export function EquipmentListPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>('');
 
   useEffect(() => {
-    equipmentService.getCategories().then(setCategories).catch(console.error);
+    equipmentService.getCategories().then(setCategories).catch((err) => {
+      console.error('Kategorifeil:', err instanceof Error ? err.message : 'Ukjent feil');
+    });
   }, []);
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export function EquipmentListPage() {
         });
         setEquipment(data);
       } catch (err) {
-        console.error('Feil ved lasting av utstyr:', err);
+        console.error('Feil ved lasting av utstyr:', err instanceof Error ? err.message : 'Ukjent feil');
       } finally {
         setLoading(false);
       }

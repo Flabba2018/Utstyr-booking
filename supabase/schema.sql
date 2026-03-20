@@ -117,7 +117,7 @@ CREATE INDEX idx_equipment_active ON equipment(active);
 
 CREATE TABLE bookings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE RESTRICT,
   user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
@@ -143,7 +143,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM bookings
     WHERE equipment_id = NEW.equipment_id
-      AND id != COALESCE(NEW.id, uuid_generate_v4())
+      AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
       AND status = 'aktiv'
       AND start_time < NEW.end_time
       AND end_time > NEW.start_time
@@ -164,7 +164,7 @@ CREATE TRIGGER check_booking_overlap_trigger
 
 CREATE TABLE loans (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE RESTRICT,
   user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL, -- kobling til booking hvis relevant
   status loan_status NOT NULL DEFAULT 'aktiv',
@@ -187,7 +187,7 @@ CREATE INDEX idx_loans_booking ON loans(booking_id);
 CREATE TABLE condition_reports (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   loan_id UUID NOT NULL REFERENCES loans(id) ON DELETE CASCADE,
-  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE RESTRICT,
   report_type TEXT NOT NULL CHECK (report_type IN ('checkout', 'return')),
   condition condition_rating NOT NULL DEFAULT 'ok',
   description TEXT,
@@ -203,7 +203,7 @@ CREATE INDEX idx_condition_reports_equipment ON condition_reports(equipment_id);
 
 CREATE TABLE deviations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+  equipment_id UUID NOT NULL REFERENCES equipment(id) ON DELETE RESTRICT,
   loan_id UUID REFERENCES loans(id) ON DELETE SET NULL,
   booking_id UUID REFERENCES bookings(id) ON DELETE SET NULL,
   reported_by UUID NOT NULL REFERENCES profiles(id),
@@ -222,6 +222,10 @@ CREATE TABLE deviations (
 
 CREATE INDEX idx_deviations_equipment ON deviations(equipment_id);
 CREATE INDEX idx_deviations_status ON deviations(status);
+CREATE INDEX idx_deviations_severity ON deviations(severity);
+
+-- Composite index for booking conflict checking
+CREATE INDEX idx_bookings_conflict_check ON bookings(equipment_id, status, start_time, end_time);
 
 -- Trigger: sett utstyr ute_av_drift ved kritisk/høy avvik
 CREATE OR REPLACE FUNCTION handle_critical_deviation()
@@ -453,3 +457,26 @@ CREATE POLICY "Admin kan se integrasjonshendelser" ON integration_events
   FOR SELECT USING (is_admin());
 CREATE POLICY "System kan opprette integrasjonshendelser" ON integration_events
   FOR INSERT WITH CHECK (is_admin());
+
+-- =============================================================================
+-- STORAGE: Bucket for bildeopplasting
+-- =============================================================================
+-- Kjør dette i Supabase Dashboard → SQL Editor etter at schema er opprettet,
+-- eller opprett bucket manuelt via Dashboard → Storage.
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('equipment-images', 'equipment-images', true)
+  ON CONFLICT (id) DO NOTHING;
+
+-- Alle innloggede brukere kan laste opp bilder
+CREATE POLICY "Innloggede kan laste opp bilder" ON storage.objects
+  FOR INSERT WITH CHECK (
+    bucket_id = 'equipment-images' AND auth.role() = 'authenticated'
+  );
+
+-- Alle kan lese bilder (public bucket)
+CREATE POLICY "Alle kan lese bilder" ON storage.objects
+  FOR SELECT USING (bucket_id = 'equipment-images');
+
+-- Brukere kan slette egne bilder, admin kan slette alle
+CREATE POLICY "Admin kan slette bilder" ON storage.objects
+  FOR DELETE USING (bucket_id = 'equipment-images' AND is_admin());

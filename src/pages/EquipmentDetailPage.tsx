@@ -15,6 +15,7 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Modal } from '../components/ui/Modal';
+import { ImageUpload } from '../components/ui/ImageUpload';
 import {
   formatDate, formatDateTime, formatRelative,
   getEquipmentUrl, isServiceOverdue, isServiceApproaching,
@@ -63,11 +64,13 @@ export function EquipmentDetailPage() {
   // Loan form
   const [loanCondition, setLoanCondition] = useState<ConditionRating>('ok');
   const [loanComment, setLoanComment] = useState('');
+  const [loanImages, setLoanImages] = useState<string[]>([]);
   const [selectedBookingForLoan, setSelectedBookingForLoan] = useState<string>('');
 
   // Return form
   const [returnCondition, setReturnCondition] = useState<ConditionRating>('ok');
   const [returnComment, setReturnComment] = useState('');
+  const [returnImages, setReturnImages] = useState<string[]>([]);
   const [activeLoanId, setActiveLoanId] = useState<string>('');
 
   // Deviation form
@@ -75,26 +78,28 @@ export function EquipmentDetailPage() {
   const [devSeverity, setDevSeverity] = useState<DeviationSeverity>('middels');
   const [devTitle, setDevTitle] = useState('');
   const [devDescription, setDevDescription] = useState('');
+  const [devImages, setDevImages] = useState<string[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
     try {
-      const [eq, bk, ln, dv, sr] = await Promise.all([
+      const results = await Promise.allSettled([
         equipmentService.getEquipment(id),
         bookingService.getBookingsForEquipment(id, 'aktiv'),
         loanService.getLoanHistory(id),
         deviationService.getDeviationsForEquipment(id),
         serviceService.getServiceRecords(id),
       ]);
-      setEquipment(eq);
-      setBookings(bk);
-      setLoanHistory(ln);
-      setDeviations(dv);
-      setServiceRecords(sr);
+      if (results[0].status === 'fulfilled') setEquipment(results[0].value);
+      if (results[1].status === 'fulfilled') setBookings(results[1].value);
+      if (results[2].status === 'fulfilled') setLoanHistory(results[2].value);
+      if (results[3].status === 'fulfilled') setDeviations(results[3].value);
+      if (results[4].status === 'fulfilled') setServiceRecords(results[4].value);
     } catch (err) {
-      console.error('Feil ved lasting:', err);
+      const msg = err instanceof Error ? err.message : 'Ukjent feil';
+      console.error('Feil ved lasting:', msg);
       showToast('Kunne ikke laste utstyr', 'error');
     } finally {
       setLoading(false);
@@ -161,11 +166,13 @@ export function EquipmentDetailPage() {
         report_type: 'checkout',
         condition: loanCondition,
         description: loanComment || undefined,
+        images: loanImages.length > 0 ? loanImages : undefined,
       });
       showToast('Utlån registrert!', 'success');
       setShowLoanModal(false);
       setLoanComment('');
       setLoanCondition('ok');
+      setLoanImages([]);
       setSelectedBookingForLoan('');
       await loadData();
     } catch (err) {
@@ -187,6 +194,7 @@ export function EquipmentDetailPage() {
         report_type: 'return',
         condition: returnCondition,
         description: returnComment || undefined,
+        images: returnImages.length > 0 ? returnImages : undefined,
       });
       // Registrer retur
       await loanService.returnLoan(activeLoanId, {
@@ -196,6 +204,7 @@ export function EquipmentDetailPage() {
       setShowReturnModal(false);
       setReturnComment('');
       setReturnCondition('ok');
+      setReturnImages([]);
 
       // Hvis alvorlig skade, opprett avvik automatisk
       if (returnCondition === 'skade') {
@@ -204,7 +213,7 @@ export function EquipmentDetailPage() {
           loan_id: activeLoanId,
           type: 'skade',
           severity: 'høy',
-          title: `Skade registrert ved retur`,
+          title: `[AUTO] Skade registrert ved retur`,
           description: returnComment || 'Skade oppdaget ved innlevering',
         });
         showToast('Avvik opprettet automatisk pga. skade', 'info');
@@ -229,14 +238,17 @@ export function EquipmentDetailPage() {
         severity: devSeverity,
         title: devTitle,
         description: devDescription || undefined,
+        images: devImages.length > 0 ? devImages : undefined,
       });
       showToast('Avvik registrert!', 'success');
       setShowDeviationModal(false);
       setDevTitle('');
       setDevDescription('');
+      setDevImages([]);
       await loadData();
     } catch (err) {
-      showToast('Feil ved registrering av avvik', 'error');
+      const msg = err instanceof Error ? err.message : 'Feil ved registrering av avvik';
+      showToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -537,6 +549,47 @@ export function EquipmentDetailPage() {
         onClose={() => setShowBookingModal(false)}
         title="Ny booking"
       >
+        {/* Eksisterende bookinger for visuell konfliktsjekk */}
+        {bookings.length > 0 && (
+          <div style={{ marginBottom: '16px' }}>
+            <label className="form-label">Eksisterende bookinger</label>
+            <div style={{
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              padding: '8px', maxHeight: '140px', overflowY: 'auto', background: 'var(--color-bg)',
+            }}>
+              {bookings.map((b) => {
+                const isConflict = bookingStart && bookingEnd &&
+                  new Date(fromDateTimeLocal(bookingStart)) < new Date(b.end_time) &&
+                  new Date(fromDateTimeLocal(bookingEnd)) > new Date(b.start_time);
+                return (
+                  <div key={b.id} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '4px 8px', marginBottom: '4px', borderRadius: '4px', fontSize: '0.8rem',
+                    background: isConflict ? 'var(--color-danger-light)' : 'var(--color-surface)',
+                    border: isConflict ? '1px solid var(--color-danger)' : '1px solid transparent',
+                  }}>
+                    <span>{formatDateTime(b.start_time)} – {formatDateTime(b.end_time)}</span>
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
+                      {b.user?.full_name ?? 'Booket'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Konfliktvarsel */}
+        {bookingStart && bookingEnd && bookings.some((b) =>
+          new Date(fromDateTimeLocal(bookingStart)) < new Date(b.end_time) &&
+          new Date(fromDateTimeLocal(bookingEnd)) > new Date(b.start_time)
+        ) && (
+          <div className="service-alert danger" style={{ marginBottom: '16px' }}>
+            <AlertTriangle size={16} />
+            Tidspunktet overlapper med eksisterende booking
+          </div>
+        )}
+
         <div className="form-group">
           <label className="form-label">Fra</label>
           <input
@@ -631,6 +684,10 @@ export function EquipmentDetailPage() {
             placeholder="Eventuelle merknader..."
           />
         </div>
+        <ImageUpload
+          folder="conditions"
+          onUpload={(urls) => setLoanImages((prev) => [...prev, ...urls])}
+        />
         <button
           className="btn btn-success btn-full"
           onClick={handleStartLoan}
@@ -672,6 +729,10 @@ export function EquipmentDetailPage() {
             placeholder="Beskriv eventuell skade eller merknad..."
           />
         </div>
+        <ImageUpload
+          folder="conditions"
+          onUpload={(urls) => setReturnImages((prev) => [...prev, ...urls])}
+        />
         <button
           className="btn btn-warning btn-full"
           onClick={handleReturn}
@@ -735,6 +796,10 @@ export function EquipmentDetailPage() {
             placeholder="Detaljert beskrivelse..."
           />
         </div>
+        <ImageUpload
+          folder="deviations"
+          onUpload={(urls) => setDevImages((prev) => [...prev, ...urls])}
+        />
         <button
           className="btn btn-danger btn-full"
           onClick={handleCreateDeviation}

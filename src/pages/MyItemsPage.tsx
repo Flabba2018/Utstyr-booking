@@ -24,21 +24,24 @@ export function MyItemsPage() {
 
   useEffect(() => {
     if (!profile) return;
+    let cancelled = false;
     const load = async () => {
       try {
-        const [bk, ln] = await Promise.all([
+        const results = await Promise.allSettled([
           bookingService.getMyBookings(profile.id),
           loanService.getMyLoans(profile.id),
         ]);
-        setBookings(bk);
-        setLoans(ln);
+        if (cancelled) return;
+        if (results[0].status === 'fulfilled') setBookings(results[0].value);
+        if (results[1].status === 'fulfilled') setLoans(results[1].value);
       } catch (err) {
-        console.error('Feil:', err);
+        console.error('Feil:', err instanceof Error ? err.message : 'Ukjent feil');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     load();
+    return () => { cancelled = true; };
   }, [profile]);
 
   if (loading) return <LoadingSpinner />;

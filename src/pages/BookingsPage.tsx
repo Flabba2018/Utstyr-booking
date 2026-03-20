@@ -25,6 +25,7 @@ export function BookingsPage() {
   const days = eachDayOfInterval({ start: weekStart, end: weekEnd });
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       setLoading(true);
       try {
@@ -32,14 +33,15 @@ export function BookingsPage() {
           weekStart.toISOString(),
           weekEnd.toISOString()
         );
-        setBookings(data);
+        if (!cancelled) setBookings(data);
       } catch (err) {
-        console.error('Feil ved lasting av bookinger:', err);
+        console.error('Feil ved lasting av bookinger:', err instanceof Error ? err.message : 'Ukjent feil');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     load();
+    return () => { cancelled = true; };
   }, [currentWeek]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getBookingsForDay = (day: Date) =>
@@ -102,6 +104,46 @@ export function BookingsPage() {
         <LoadingSpinner />
       ) : (
         <div>
+          {/* Uke-oversikt minibar */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
+            gap: '4px', marginBottom: '16px', padding: '8px',
+            background: 'var(--color-surface)', borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--color-border)',
+          }}>
+            {days.map((day) => {
+              const count = getBookingsForDay(day).length;
+              const isToday = isSameDay(day, new Date());
+              return (
+                <div key={day.toISOString()} style={{ textAlign: 'center' }}>
+                  <div style={{
+                    fontSize: '0.7rem', fontWeight: 600,
+                    color: isToday ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                  }}>
+                    {format(day, 'EEE', { locale: nb })}
+                  </div>
+                  <div style={{
+                    fontSize: '0.75rem', fontWeight: isToday ? 700 : 400,
+                    color: isToday ? 'var(--color-primary)' : 'var(--color-text)',
+                  }}>
+                    {format(day, 'd')}
+                  </div>
+                  <div style={{
+                    height: '4px', borderRadius: '2px', marginTop: '4px',
+                    background: count > 0
+                      ? count >= 3 ? 'var(--color-danger)' : count >= 2 ? 'var(--color-warning)' : 'var(--color-primary)'
+                      : 'var(--color-border)',
+                  }} />
+                  {count > 0 && (
+                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                      {count}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
           {days.map((day) => {
             const dayBookings = getBookingsForDay(day);
             const isToday = isSameDay(day, new Date());
